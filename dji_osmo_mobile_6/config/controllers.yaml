@@ -1,0 +1,26 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 250 # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    gimbal_position_controller:
+      type: position_controllers/JointGroupPositionController
+
+    gimbal_effort_controller:
+      type: effort_controllers/JointGroupEffortController
+
+gimbal_position_controller:
+  ros__parameters:
+    joints:
+      - yaw_joint
+      - roll_joint
+      - pitch_joint
+
+gimbal_effort_controller:
+  ros__parameters:
+    joints:
+      - yaw_joint
+      - roll_joint
+      - pitch_joint
