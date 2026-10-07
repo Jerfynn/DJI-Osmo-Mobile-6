@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DJI Osmo Mobile 6 - 3D Gimbal Simulator</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #1a1a1e;
+      color: #fff;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    #ui-panel {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      width: 320px;
+      background: rgba(28, 28, 35, 0.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    h2 {
+      margin: 0 0 4px 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 12px;
+      color: #9a9ab0;
+      margin-bottom: 16px;
+    }
+    .control-group {
+      margin-bottom: 12px;
+    }
+    label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 4px;
+      color: #ddd;
+    }
+    input[type=range] {
+      width: 100%;
+      accent-color: #3b82f6;
+    }
+    .toggle-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 15px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #4b5563; transition: .3s; border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background-color: white; transition: .3s; border-radius: 50%;
+    }
+    input:checked + .slider { background-color: #10b981; }
+    input:checked + .slider:before { transform: translateX(20px); }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      font-size: 11px;
+      border-radius: 4px;
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      margin-top: 8px;
+    }
+    #telemetry {
+      margin-top: 14px;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #a7f3d0;
+      background: rgba(0,0,0,0.3);
+      padding: 8px 10px;
+      border-radius: 6px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/STLLoader.js"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  
+  <div id="ui-panel">
+    <h2>DJI Osmo Mobile 6</h2>
+    <div class="subtitle">Interactive 3-Axis Kinematics & IMU Simulator</div>
+
+    <div class="control-group">
+      <label>Base Handle Tilt (Shake) <span id="val-handle">0°</span></label>
+      <input type="range" id="slider-handle" min="-45" max="45" value="0">
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 12px 0;">
+
+    <div class="control-group">
+      <label>Yaw (Pan) Joint <span id="val-yaw">0°</span></label>
+      <input type="range" id="slider-yaw" min="-160" max="160" value="0">
+    </div>
+
+    <div class="control-group">
+      <label>Roll Joint <span id="val-roll">0°</span></label>
+      <input type="range" id="slider-roll" min="-90" max="90" value="0">
+    </div>
+
+    <div class="control-group">
+      <label>Pitch (Tilt) Joint <span id="val-pitch">0°</span></label>
+      <input type="range" id="slider-pitch" min="-90" max="90" value="0">
+    </div>
+
+    <div class="toggle-box">
+      <span style="font-size: 13px; font-weight: 500;">Active IMU Horizon Stabilization</span>
+      <label class="switch">
+        <input type="checkbox" id="toggle-imu" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div id="telemetry">
+      IMU Gyro Rate: 0.00 deg/s<br>
+      IMU Horizon Error: 0.00°<br>
+      Motor Corrective Effort: 0.00 Nm
+    </div>
+  </div>
+
+  <script>
+    // 3D Scene Setup
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x18181b);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 10);
+    camera.position.set(0.25, 0.25, 0.35);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.12, 0);
+    controls.update();
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight1.position.set(1, 2, 1);
+    scene.add(dirLight1);
+
+    const dirLight2 = new THREE.DirectionalLight(0x60a5fa, 0.4);
+    dirLight2.position.set(-1, -1, -1);
+    scene.add(dirLight2);
+
+    // Floor Grid
+    const grid = new THREE.GridHelper(1, 20, 0x3b82f6, 0x27272a);
+    grid.position.y = 0;
+    scene.add(grid);
+
+    // Materials
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x242426, roughness: 0.4, metalness: 0.2 });
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x323236, roughness: 0.3, metalness: 0.4 });
+    const silverMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.2, metalness: 0.8 });
+    const phoneMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.9 });
+
+    // Kinematic Tree Hierarchy (Three.js Object3D nodes)
+    const baseGroup = new THREE.Group(); // Handle
+    const yawJoint = new THREE.Group();  // Yaw axis
+    const rollJoint = new THREE.Group(); // Roll axis
+    const pitchJoint = new THREE.Group();// Pitch axis
+    const phoneGroup = new THREE.Group();// Phone mount + IMU
+
+    scene.add(baseGroup);
+
+    // Joint Pivot Offsets (matching URDF)
+    yawJoint.position.set(0, 0.1070, 0);
+    baseGroup.add(yawJoint);
+
+    rollJoint.position.set(0.0072, 0.0277, -0.0357);
+    yawJoint.add(rollJoint);
+
+    pitchJoint.position.set(0.0017, 0.0591, 0.0543);
+    rollJoint.add(pitchJoint);
+
+    pitchJoint.add(phoneGroup);
+
+    // Load STL Meshes
+    const loader = new THREE.STLLoader();
+    const meshBasePath = 'meshes/stl/';
+
+    function loadMesh(filename, material, parent, scale=1) {
+      loader.load(meshBasePath + filename, (geom) => {
+        geom.computeVertexNormals();
+        const mesh = new THREE.Mesh(geom, material);
+        // Convert ROS (Z-up, X-forward) to Three.js (Y-up, Z-forward)
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.scale.set(scale, scale, scale);
+        parent.add(mesh);
+      }, undefined, (err) => {
+        // Fallback visual geometry if run directly via file:// where CORS blocks local files
+        createFallbackGeometry(filename, parent);
+      });
+    }
+
+    // Fallback primitives in case local file:// security prevents async fetch
+    function createFallbackGeometry(type, parent) {
+      let geo, mat;
+      if (type.includes('base')) {
+        geo = new THREE.CylinderGeometry(0.018, 0.016, 0.11, 24);
+        geo.translate(0, 0.055, 0);
+        mat = darkMat;
+      } else if (type.includes('yaw')) {
+        geo = new THREE.BoxGeometry(0.02, 0.03, 0.04);
+        geo.translate(0, 0.015, -0.015);
+        mat = armMat;
+      } else if (type.includes('roll')) {
+        geo = new THREE.BoxGeometry(0.02, 0.06, 0.03);
+        geo.translate(0, 0.03, 0.02);
+        mat = armMat;
+      } else {
+        // Phone clamp + Phone
+        geo = new THREE.BoxGeometry(0.14, 0.07, 0.008);
+        mat = phoneMat;
+      }
+      const mesh = new THREE.Mesh(geo, mat);
+      parent.add(mesh);
+    }
+
+    loadMesh('base_link.stl', darkMat, baseGroup);
+    loadMesh('yaw_link.stl', armMat, yawJoint);
+    loadMesh('roll_link.stl', armMat, rollJoint);
+    loadMesh('pitch_link.stl', silverMat, phoneGroup);
+
+    // Simulated Phone Payload
+    const phoneGeo = new THREE.BoxGeometry(0.15, 0.072, 0.008);
+    const phoneMesh = new THREE.Mesh(phoneGeo, phoneMat);
+    phoneMesh.position.set(0, 0, 0.015);
+    phoneGroup.add(phoneMesh);
+
+    // Screen
+    const screenGeo = new THREE.PlaneGeometry(0.145, 0.068);
+    const screenMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+    screenMesh.position.set(0, 0, 0.020);
+    phoneGroup.add(screenMesh);
+
+    // UI Input Handling
+    const sliderHandle = document.getElementById('slider-handle');
+    const sliderYaw = document.getElementById('slider-yaw');
+    const sliderRoll = document.getElementById('slider-roll');
+    const sliderPitch = document.getElementById('slider-pitch');
+    const toggleIMU = document.getElementById('toggle-imu');
+    const telemetry = document.getElementById('telemetry');
+
+    let currentRollCorrection = 0;
+    let currentPitchCorrection = 0;
+
+    function degToRad(deg) { return deg * Math.PI / 180; }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const handleAngle = parseFloat(sliderHandle.value);
+      const userYaw = parseFloat(sliderYaw.value);
+      const userRoll = parseFloat(sliderRoll.value);
+      const userPitch = parseFloat(sliderPitch.value);
+
+      document.getElementById('val-handle').innerText = handleAngle + '°';
+      document.getElementById('val-yaw').innerText = userYaw + '°';
+      document.getElementById('val-roll').innerText = userRoll + '°';
+      document.getElementById('val-pitch').innerText = userPitch + '°';
+
+      // Tilt handle (simulating user hand motion)
+      baseGroup.rotation.z = degToRad(handleAngle);
+
+      // Manual control angles
+      yawJoint.rotation.y = degToRad(userYaw);
+
+      if (toggleIMU.checked) {
+        // Closed-loop IMU stabilization: counteract handle tilt
+        const targetRoll = -degToRad(handleAngle) + degToRad(userRoll);
+        currentRollCorrection += (targetRoll - currentRollCorrection) * 0.1; // Smooth PID filter
+        rollJoint.rotation.x = currentRollCorrection;
+
+        pitchJoint.rotation.z = degToRad(userPitch);
+
+        // Update telemetry
+        const errorDeg = Math.abs(handleAngle + (currentRollCorrection * 180 / Math.PI)).toFixed(2);
+        const effort = (Math.sin(degToRad(handleAngle)) * 0.35).toFixed(2);
+        telemetry.innerHTML = `
+          IMU Active: YES (200 Hz Closed-Loop)<br>
+          Handle Disturbance: ${handleAngle}°<br>
+          Stabilizer Horizon Error: ${errorDeg}°<br>
+          Corrective Motor Torque: ${effort} Nm
+        `;
+      } else {
+        // Raw manual joints without stabilization
+        rollJoint.rotation.x = degToRad(userRoll);
+        pitchJoint.rotation.z = degToRad(userPitch);
+        telemetry.innerHTML = `
+          IMU Active: OFF (Manual Feedforward)<br>
+          Phone Horizon Level: ${handleAngle + userRoll}°<br>
+          Phone Tilt (Pitch): ${userPitch}°
+        `;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
